@@ -1,83 +1,77 @@
 #include "main.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/wait.h>
 
-#define MAX_COMMAND_LENGTH 100
+/* Global variable for interrupt signal handling */
+unsigned int sig_flag;
 
 /**
- * display_prompt - displays the shell prompt for input
- * Description: displays prompt
+ * sig_handler - Handles inteerupt signal
+ * @sig: signal number
+ *
+ * Return: void
  */
 
-void display_prompt(void)
+static void sig_handler(int sig)
 {
-	printf("simple_shell> ");
+	(void) sig;
+	if (sig_flag == 0)
+		_puts("\n$ ");
+	else
+		_puts("\n");
 }
 
 /**
- * Main - reads user input and executes the command
- * @argc: specifies the number of arguments
- * @argv: an array of strings that contain the actual argument
- * Return: the executed command
+ * main - main function
+ * @argc: number of arguments
+ * @argv: array of arguments passed to main
+ * @environ: array of environment variables
+ *
+ * Return: 0 or exit status
  */
 
-int main(int argc, char **argv)
+int main(int argc __attribute__((unused)), char **argv, char **environ)
 {
-	char cmd[MAX_COMMAND_LENGTH];
-	char *environ[] = {NULL}; /* environment variable */
+	size_t buffer_len = 0;
+	unsigned int is_pipe = 0;
+	unsigned int i;
+	variables_t vars = {NULL, NULL, NULL, 0, NULL, 0, NULL};
 
-	pid_t pid;
-	int status;
+	vars.shell_args = argv;
+	vars.envp = create_env(environ);
+	signal(SIGINT, sig_handler);
 
-	while (1)
+	if (!isatty(STDIN_FILENO))
+		is_pipe = 1;
+	if (is_pipe == 0)
+		_puts("$ ");
+	sig_flag = 0;
+
+	while (getline(&(vars.buffer), &buffer_len, stdin) != -1)
 	{
-		display_prompt();
+		sig_flag = 1;
+		vars.cmd_count++;
+		vars.cmds = tokenize(vars.buffer, ";");
 
-		/* Read user input from stdin */
-		if (fgets(cmd, sizeof(cmd), stdin) == NULL)
+		for (i = 0; vars.cmds && vars.cmds[i] != NULL; i++)
 		{
-			/* Handle end of file (Ctrl+D)*/
-			printf("\n");
-			exit(0);
+			vars.args = tokenize(vars.cmds[i], "\n \t\r");
+			if (vars.args && vars.args[0])
+				if (check_for_builtin(&vars) == NULL)
+					check_for_path(&vars);
+			free(vars.args);
 		}
 
-		/* Remove newline character from the input */
-		cmd[strcspn(cmd, "\n")] = '\0';
+		free(vars.buffer);
+		free(vars.cmds);
+		sig_flag = 0;
 
-		/* Fork a new process */
-		pid = fork();
-
-		if (pid == 0)
-		{
-			/* Child process */
-			char *exec_args[] = {cmd, NULL};
-
-			/* Execute the command using execve */
-			if (execve(cmd, exec_args, environ) == -1)
-			{
-				/* Executable not found or failed to execute */
-				perror("Error");
-				exit(1);
-			}
-		}
-
-		else if (pid > 0)
-		{
-			/* Parent process */
-			waitpid(pid, &status, 0);
-		}
-
-		else
-		{
-			/* Fork failed */
-			perror("Error");
-			exit(1);
-		}
+		if (is_pipe == 0)
+			_puts("$ ");
+		vars.buffer = NULL;
 	}
 
-	return (0);
+	if (is_pipe == 0)
+		_puts("\n");
+	free_env(vars.envp);
+	free(vars.buffer);
+	exit(vars.exit_status);
 }
